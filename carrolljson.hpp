@@ -1,58 +1,56 @@
 #ifndef CARROLLJSON_H
 #define CARROLLJSON_H
 
-#include <iostream>
-#include <string>
+#include "DataTypes.hpp"
 #include <variant>
 #include <format>
-#include "DataTypes.hpp"
+#include <string>
 
 class carrolljson {
 private:
-	class Value;
+	class JsonValue;
+
 	using value_t = std::variant<
 		std::monostate,
 		nullptr_t,
 		bool,
 		double,
 		std::string,
-		Vector<Value>,
-		Map<std::string, Value>
+		Vector<JsonValue>,
+		HashMap<std::string, JsonValue>
 	>;
 
-	class Value {
+	class JsonValue {
 	private:
 		value_t m_Data;
 
 	public:
-		Value() = default;
-		Value(value_t value) : m_Data(std::move(value)) {}
-		Value(std::initializer_list<value_t> list) {
-			Vector<Value> values;
+		JsonValue() = default;
+		JsonValue(value_t value) : m_Data(std::move(value)) {}
+
+		JsonValue(const std::initializer_list<value_t>& list) {
+			Vector<JsonValue> values;
 			for (const auto& value : list) {
 				values.push_back(value);
 			}
 			m_Data = values;
 		}
-		Value(std::initializer_list<std::pair<std::string, value_t>> list) {
-			Map<std::string, Value> values;
+
+		JsonValue(const std::initializer_list<std::pair<std::string, value_t>>& list) {
+			HashMap<std::string, JsonValue> map;
 			for (const auto& [key, value] : list) {
-				values[key] = value;
+				map[key] = value;
 			}
-			m_Data = values;
+			m_Data = map;
 		}
 
-		Value& operator=(value_t val) {
+		JsonValue& operator=(const value_t& val) {
 			m_Data = val;
 			return *this;
 		}
 
-		Value& operator=(std::initializer_list<value_t> list) {
-			Vector<Value> values;
-			for (const auto& value : list) {
-				values.push_back(value);
-			}
-			m_Data = values;
+		JsonValue& operator=(value_t&& val) {
+			m_Data = std::move(val);
 			return *this;
 		}
 
@@ -65,85 +63,81 @@ private:
 		}
 	};
 
-	static std::string get_indent(int indent) {
-		return std::string(indent * 4, ' ');
+	static std::string get_indent(int depth) {
+		return std::string(depth * 4, ' ');
 	}
 
-	static std::string get_value_string(const Value& value, int& depth) {
-		std::string str = "";
-		std::visit([&str, &depth](const auto& val) {
-			using T = std::decay_t<decltype(val)>;
+	static std::string get_value_string(const JsonValue& value, int depth) {
+		std::string valueStr = "";
+		std::visit([&valueStr, &depth](const auto& data) {
+			using T = std::decay_t<decltype(data)>;
 
 			if constexpr (std::is_same_v<T, double> || std::is_same_v<T, bool>) {
-				str = std::format("{}", val);
+				valueStr = std::format("{}", data);
 			}
 			else if constexpr (std::is_same_v<T, std::string>) {
-				str = std::format("\"{}\"", val);
+				valueStr = std::format("\"{}\"", data);
 			}
 			else if constexpr (std::is_same_v<T, nullptr_t> || std::is_same_v<T, std::monostate>) {
-				str = "null";
+				valueStr = "null";
 			}
-			else if constexpr (std::is_same_v<T, Vector<Value>>) {
-				str = "[\n";
+			else if constexpr (std::is_same_v<T, Vector<JsonValue>>) {
+				valueStr = "[\n";
 				depth += 2;
-				int zero = 0;
-				for (size_t i = 0; i < val.size(); ++i) {
-					str += get_indent(depth) + get_value_string(val[i], zero) + (i + 1 < val.size() ? "," : "") + "\n";
+				for (size_t i = 0; i < data.size(); ++i) {
+					valueStr += get_indent(depth) + get_value_string(data[i], 0) + (i + 1 < data.size() ? "," : "") + "\n";
 				}
 				--depth;
-				str += get_indent(depth) + "]";
+				valueStr += get_indent(depth) + "]";
 			}
-			else if constexpr (std::is_same_v<T, Map<std::string, Value>>) {
-				str = "{\n";
-				++depth;
-				int zero = 0;
-				for (size_t i = 0; i < val.size(); ++i) {
-					str += get_indent(depth) + "\"" + val.get_key(i) + "\": " + get_value_string(val.get_value(i), zero) + (i + 1 < val.size() ? ", " : "") + "\n";
+			else if constexpr (std::is_same_v<T, HashMap<std::string, JsonValue>>) {
+				valueStr = "{\n";
+				depth += 1;
+				size_t i = 0;
+				for (const auto& [key, val] : data) {
+					valueStr += get_indent(depth) + "\"" + key + "\": " + get_value_string(val, 0) + (i + 1 < data.size() ? ", \n" : "\n");
+					i++;
 				}
 				--depth;
-				str += get_indent(depth) + "}";
+				valueStr += get_indent(depth) + "}";
 			}
 		}, value.get_data());
-		return str;
+		return valueStr;
 	}
 
 	class JsonParser {
 	private:
-		const std::string& jsonSource;
-		size_t i;
+		const std::string& m_JsonSource;
+		size_t m_Idx;
 
 	public:
-		JsonParser(const std::string& source) : jsonSource(source), i(0) {}
+		JsonParser(const std::string& source) : m_JsonSource(source) {
+			m_Idx = 0;
+		}
 
-		Map<std::string, Value> parse_json() {
-			i = 0;
-			skip_whitespace();
-
-			if (jsonSource[i] != '{') {
-				throw std::runtime_error("JSON must start with an object.");
-			}
-
-			return parse_object();
+		HashMap<std::string, JsonValue> parse_json() {
+			m_Idx = 0;
+			
 		}
 
 	private:
 		void skip_whitespace() {
-			while (i < jsonSource.size() && isspace(jsonSource[i])) {
-				++i;
+			while (m_Idx < m_JsonSource.size() && isspace(m_JsonSource[m_Idx])) {
+				++m_Idx;
 			}
 		}
 
 		std::string parse_string() {
 			std::string result = "";
-			++i;
-			while (jsonSource[i] != '"') {
-				if (jsonSource[i] == '\\') {
-					++i;
-					if (i >= jsonSource.size()) {
+			++m_Idx;
+			while (m_JsonSource[m_Idx] != '"') {
+				if (m_JsonSource[m_Idx] == '\\') {
+					++m_Idx;
+					if (m_Idx >= m_JsonSource.size()) {
 						throw std::runtime_error("Invalid escape sequence in string.");
 					}
 
-					switch (jsonSource[i]) {
+					switch (m_JsonSource[m_Idx]) {
 						case '"': result += '"'; break;
 						case '\\': result += '\\'; break;
 						case 'b': result += '\b'; break;
@@ -155,124 +149,124 @@ private:
 					}
 				}
 				else {
-					result += jsonSource[i];
+					result += m_JsonSource[m_Idx];
 				}
 
-				++i;
+				++m_Idx;
 			}
 
-			if (i >= jsonSource.size() || jsonSource[i] != '"') {
+			if (m_Idx >= m_JsonSource.size() || m_JsonSource[m_Idx] != '"') {
 				throw std::runtime_error("Unterminated string in input.");
 			}
-			++i;
+			++m_Idx;
 
 			return result;
 		}
 
 		double parse_number() {
-			size_t start = i;
+			size_t start = m_Idx;
 			bool seenDot = false;
 			bool seenDash = false;
 
-			while (i < jsonSource.size() && (isdigit(jsonSource[i]) || jsonSource[i] == '.' || jsonSource[i] == '-')) {
-				if (jsonSource[i] == '.') {
+			while (m_Idx < m_JsonSource.size() && (isdigit(m_JsonSource[m_Idx]) || m_JsonSource[m_Idx] == '.' || m_JsonSource[m_Idx] == '-')) {
+				if (m_JsonSource[m_Idx] == '.') {
 					if (seenDot) {
 						throw std::runtime_error("Improperly formatted number value in JSON");
 					}
 					seenDot = true;
 				}
-				else if (jsonSource[i] == '-') {
+				else if (m_JsonSource[m_Idx] == '-') {
 					if (seenDash) {
 						throw std::runtime_error("Improperly formatted number value in JSON");
 					}
 					seenDash = true;
 				}
-				++i;
+				++m_Idx;
 			}
 
-			return std::stod(jsonSource.substr(start, i - start));
+			return std::stod(m_JsonSource.substr(start, m_Idx - start));
 		}
 
-		Vector<Value> parse_array() {
-			Vector<Value> array;
-			++i;
+		Vector<JsonValue> parse_array() {
+			Vector<JsonValue> array;
+			++m_Idx;
 			skip_whitespace();
 
-			while (jsonSource[i] != ']') {
+			while (m_JsonSource[m_Idx] != ']') {
 				array.push_back(parse_value());
 				skip_whitespace();
 
-				if (jsonSource[i] == ',') {
-					++i;
+				if (m_JsonSource[m_Idx] == ',') {
+					++m_Idx;
 					skip_whitespace();
 				}
-				else if (jsonSource[i] != ']') {
+				else if (m_JsonSource[m_Idx] != ']') {
 					throw std::runtime_error("Expected ',' or ']' in array");
 				}
 			}
 
-			++i;
+			++m_Idx;
 			return array;
 		}
 
-		Map<std::string, Value> parse_object() {
-			Map<std::string, Value> obj;
-			++i;
+		HashMap<std::string, JsonValue> parse_object() {
+			HashMap<std::string, JsonValue> obj;
+			++m_Idx;
 			skip_whitespace();
 
-			while (jsonSource[i] != '}') {
+			while (m_JsonSource[m_Idx] != '}') {
 				std::string key = parse_string();
 				skip_whitespace();
 
-				if (jsonSource[i] != ':') {
+				if (m_JsonSource[m_Idx] != ':') {
 					throw std::runtime_error("Expected ':' after object key");
 				}
-				++i;
+				++m_Idx;
 
-				Value value = parse_value();
+				JsonValue value = parse_value();
 				obj[key] = value;
 
 				skip_whitespace();
-				if (jsonSource[i] == ',') {
-					++i;
+				if (m_JsonSource[m_Idx] == ',') {
+					++m_Idx;
 					skip_whitespace();
 				}
-				else if (jsonSource[i] != '}') {
+				else if (m_JsonSource[m_Idx] != '}') {
 					throw std::runtime_error("Expected ',' or '}' in object.");
 				}
 			}
 
-			++i;
+			++m_Idx;
 			return obj;
 		}
 
-		Value parse_value() {
+		JsonValue parse_value() {
 			skip_whitespace();
-			char c = jsonSource[i];
+			char c = m_JsonSource[m_Idx];
 
 			if (c == '"') {
-				return Value(parse_string());
+				return JsonValue(parse_string());
 			}
 			else if (isdigit(c) || c == '-') {
-				return Value(parse_number());
+				return JsonValue(parse_number());
 			}
 			else if (c == '{') {
-				return Value(parse_object());
+				return JsonValue(parse_object());
 			}
 			else if (c == '[') {
-				return Value(parse_array());
+				return JsonValue(parse_array());
 			}
-			else if (jsonSource.substr(i, 4) == "true") {
-				i += 4;
-				return Value(true);
+			else if (m_JsonSource.substr(m_Idx, 4) == "true") {
+				m_Idx += 4;
+				return JsonValue(true);
 			}
-			else if (jsonSource.substr(i, 5) == "false") {
-				i += 5;
-				return Value(false);
+			else if (m_JsonSource.substr(m_Idx, 5) == "false") {
+				m_Idx += 5;
+				return JsonValue(false);
 			}
-			else if (jsonSource.substr(i, 4) == "null") {
-				i += 4;
-				return Value(nullptr);
+			else if (m_JsonSource.substr(m_Idx, 4) == "null") {
+				m_Idx += 4;
+				return JsonValue(nullptr);
 			}
 
 			throw std::runtime_error("Invalid JSON value.");
@@ -282,24 +276,23 @@ private:
 public:
 	class JsonObject {
 	private:
-		Map<std::string, Value> m_Nodes;
+		HashMap<std::string, JsonValue> m_Nodes;
 
 	public:
-		Value& operator[](std::string key) {
+		JsonValue& operator[](const std::string& key) {
 			return m_Nodes[key];
 		}
 
-		const Value& operator[](std::string key) const {
+		const JsonValue& operator[](const std::string& key) const {
 			return m_Nodes[key];
 		}
 
 		std::string get_json() {
-			int depth = 0;
-			return get_value_string(Value(m_Nodes), depth);
+			return get_value_string(JsonValue(m_Nodes), 0);
 		}
 
-		void parse_json(const std::string& jsonInput) {
-			JsonParser parser(jsonInput);
+		void parse_json(const std::string& jsonSource) {
+			JsonParser parser(jsonSource);
 			m_Nodes = parser.parse_json();
 		}
 	};
